@@ -55,6 +55,7 @@
             <div class="bg-slate-900 border border-slate-800/80 p-4 rounded-2xl">
                 <p class="text-xs text-slate-400 font-medium">Ingerido Hoy</p>
                 <p id="today-calories" class="text-2xl font-black text-white mt-1">0 <span class="text-xs font-normal text-slate-500">kcal</span></p>
+                <p id="today-macros" class="text-[10px] text-slate-500 mt-1">P 0g · G 0g · C 0g</p>
             </div>
             <div class="bg-slate-900 border border-slate-800/80 p-4 rounded-2xl">
                 <p class="text-xs text-slate-400 font-medium">Déficit de hoy</p>
@@ -232,6 +233,36 @@
             });
         }
 
+        function parseNutritionResponse(rawText) {
+            const cleanedText = rawText.replace(/```(?:json)?/gi, '').trim();
+            const jsonStart = cleanedText.indexOf('{');
+            const jsonEnd = cleanedText.lastIndexOf('}');
+            if(jsonStart === -1 || jsonEnd < jsonStart) {
+                throw new Error('La IA no devolvió un objeto JSON válido.');
+            }
+
+            const parsed = JSON.parse(cleanedText.slice(jsonStart, jsonEnd + 1));
+            const calories = Number(parsed.calories);
+            const protein = Number(parsed.protein);
+            const fat = Number(parsed.fat);
+            const carbs = Number(parsed.carbs);
+            if(!Number.isFinite(calories) || calories < 0 ||
+                !Number.isFinite(protein) || protein < 0 ||
+                !Number.isFinite(fat) || fat < 0 ||
+                !Number.isFinite(carbs) || carbs < 0) {
+                throw new Error('El análisis debe incluir calorías y macros válidos en gramos.');
+            }
+
+            return {
+                calories: Math.round(calories),
+                protein,
+                fat,
+                carbs,
+                summary: typeof parsed.summary === 'string' && parsed.summary.trim()
+                    ? parsed.summary.trim() : 'Comida registrada'
+            };
+        }
+
         async function submitLog() {
             const text = document.getElementById('food-input').value.trim();
             const weightValue = document.getElementById('weight-input').value.trim();
@@ -268,7 +299,7 @@
                     try {
                         const energy = getDailyEnergy();
                         const energyContext = `TDEE diario estimado del usuario: ${Math.round(energy.tdee)} kcal. `;
-                        const prompt = `Actúa como un experto en nutrición. ${energyContext}Analiza esto y devuelve ÚNICAMENTE un objeto JSON estricto sin markdown (sin comillas de código ni explicaciones) con este formato exacto: {"calories": número_entero_estimado, "summary": "breve resumen de 5 palabras"}. Si solo es peso, pon calories a 0. Entrada del usuario: ${text}`;
+                        const prompt = `Actúa como un experto en nutrición. ${energyContext}Estima las calorías y los macronutrientes de la comida. Si no se indica cantidad, estima una ración individual estándar (250 ml para bebidas). No pongas 0 kcal para alimentos con energía; reserva 0 para agua u otros productos sin calorías. Devuelve ÚNICAMENTE un objeto JSON válido, sin markdown ni explicaciones, con números en gramos para los macros y este formato: {"calories": 45, "protein": 0.7, "fat": 0.2, "carbs": 10, "summary": "breve resumen"}. Entrada del usuario: ${text}`;
                         const contents = [{ text: prompt }];
 
                         if(imageFile) {
@@ -291,14 +322,7 @@
                         }
                         const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
                         if(typeof rawText !== 'string') throw new Error('La API no devolvió un análisis válido.');
-                        const parsed = JSON.parse(rawText.replace(/```json/gi, '').replace(/```/g, '').trim());
-                        const calories = Number(parsed.calories);
-                        if(!Number.isFinite(calories) || calories < 0) throw new Error('El análisis no contiene calorías válidas.');
-                        result = {
-                            calories: Math.round(calories),
-                            summary: typeof parsed.summary === 'string' && parsed.summary.trim()
-                                ? parsed.summary.trim() : 'Comida registrada'
-                        };
+                        result = parseNutritionResponse(rawText);
                     } catch (error) {
                         aiError = error;
                         console.error('No se pudo analizar el registro con IA.', error);
@@ -329,6 +353,11 @@
                         ? (text || (imageFile ? 'Foto de comida' : 'Registro de peso'))
                         : 'Registro de peso',
                     calories: result ? result.calories : 0,
+                    ...(result ? {
+                        protein: result.protein,
+                        fat: result.fat,
+                        carbs: result.carbs
+                    } : {}),
                     weight,
                     summary: result ? result.summary : 'Peso registrado'
                 });
@@ -405,6 +434,15 @@
                 return acc + (Number.isFinite(calories) && calories > 0 ? calories : 0);
             }, 0);
             document.getElementById('today-calories').innerHTML = `${todayCals} <span class="text-xs font-normal text-slate-500">kcal</span>`;
+            const todayMacros = todayLogs.reduce((totals, log) => {
+                for(const macro of ['protein', 'fat', 'carbs']) {
+                    const amount = Number(log[macro]);
+                    if(Number.isFinite(amount) && amount > 0) totals[macro] += amount;
+                }
+                return totals;
+            }, { protein: 0, fat: 0, carbs: 0 });
+            document.getElementById('today-macros').innerText =
+                `P ${todayMacros.protein.toFixed(1)}g · G ${todayMacros.fat.toFixed(1)}g · C ${todayMacros.carbs.toFixed(1)}g`;
 
             const energy = getDailyEnergy();
             const basalEl = document.getElementById('basal-calories');
@@ -441,6 +479,9 @@
                                     <div>
                                         <p class="font-bold text-slate-200">${log.text}</p>
                                         <p class="text-slate-500">${formatLogTime(log)} ${Number(log.weight) > 0 ? `• ⚖️ ${log.weight}kg` : ''}</p>
+                                        ${['protein', 'fat', 'carbs'].every(macro => log[macro] !== undefined && Number.isFinite(Number(log[macro])) && Number(log[macro]) >= 0)
+                                            ? `<p class="text-slate-500">P ${Number(log.protein).toFixed(1)}g · G ${Number(log.fat).toFixed(1)}g · C ${Number(log.carbs).toFixed(1)}g</p>`
+                                            : ''}
                                     </div>
                                     <div class="text-right">
                                         <span class="font-bold text-emerald-400">+${Number(log.calories) || 0} kcal</span>
