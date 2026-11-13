@@ -101,6 +101,22 @@
         </div>
 
         <section class="bg-slate-900 border border-slate-800 p-4 rounded-2xl space-y-3">
+            <div class="flex items-center justify-between">
+                <h2 class="text-sm font-bold text-slate-300">Agua de hoy</h2>
+                <span id="today-water" class="text-sm font-bold text-sky-400">0 ml</span>
+            </div>
+            <p class="text-xs text-slate-500">Registra el agua que bebas durante el día.</p>
+            <div class="flex gap-2">
+                <input type="number" id="water-input" placeholder="Cantidad (ml)" min="1" step="50" class="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-sky-500">
+                <button onclick="submitWater()" class="bg-sky-700 hover:bg-sky-600 font-bold text-white px-4 py-2 rounded-xl text-sm">Añadir agua</button>
+            </div>
+            <div class="flex gap-2">
+                <button onclick="addWater(250)" class="flex-1 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 py-1.5 rounded-lg text-xs">+250 ml</button>
+                <button onclick="addWater(500)" class="flex-1 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 py-1.5 rounded-lg text-xs">+500 ml</button>
+            </div>
+        </section>
+
+        <section class="bg-slate-900 border border-slate-800 p-4 rounded-2xl space-y-3">
             <h2 class="text-sm font-bold text-slate-300">Registrar peso</h2>
             <p class="text-xs text-slate-500">Añádelo los días que te peses; no hace falta registrarlo a diario.</p>
             <div class="flex gap-2">
@@ -406,6 +422,41 @@
             }
         }
 
+        function submitWater() {
+            const amount = Number(document.getElementById('water-input').value);
+            if(!Number.isFinite(amount) || amount <= 0) {
+                alert('Introduce una cantidad de agua válida en ml.');
+                return;
+            }
+            addWater(amount);
+        }
+
+        function addWater(amount) {
+            if(!Number.isFinite(amount) || amount <= 0) {
+                throw new Error('La cantidad de agua debe ser un número positivo.');
+            }
+
+            try {
+                const now = new Date();
+                const waterLog = {
+                    date: getLocalDateKey(now),
+                    timestamp: now.getTime(),
+                    type: 'water',
+                    text: 'Agua',
+                    calories: 0,
+                    waterMl: Math.round(amount)
+                };
+                const updatedLogs = [waterLog, ...logs];
+                localStorage.setItem('nutri_logs', JSON.stringify(updatedLogs));
+                logs = updatedLogs;
+                document.getElementById('water-input').value = '';
+                updateUI();
+            } catch (error) {
+                console.error('No se pudo guardar el agua.', error);
+                alert('No se pudo guardar el agua. Comprueba el almacenamiento del navegador e inténtalo de nuevo.');
+            }
+        }
+
         function getLocalDateKey(date) {
             const year = date.getFullYear();
             const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -430,6 +481,10 @@
 
         function isWeightOnlyLog(log) {
             return log.type === 'weight' || (log.text === 'Registro de peso' && Number(log.weight) > 0);
+        }
+
+        function isWaterLog(log) {
+            return log.type === 'water';
         }
 
         function escapeHTML(value) {
@@ -469,6 +524,13 @@
         function updateUI() {
             const today = getLocalDateKey(new Date());
             const todayLogs = logs.filter(log => getLogDateKey(log) === today);
+            const todayWater = todayLogs.reduce((total, log) => {
+                const amount = Number(log.waterMl);
+                return total + (isWaterLog(log) && Number.isFinite(amount) && amount > 0 ? amount : 0);
+            }, 0);
+            document.getElementById('today-water').innerText = todayWater >= 1000
+                ? `${(todayWater / 1000).toFixed(1)} L (${todayWater} ml)`
+                : `${todayWater} ml`;
             const todayCals = todayLogs.reduce((acc, log) => {
                 const calories = Number(log.calories);
                 return acc + (Number.isFinite(calories) && calories > 0 ? calories : 0);
@@ -509,7 +571,7 @@
             });
             listEl.innerHTML = [...logsByDate.entries()].map(([dateKey, dayLogs]) => {
                 const mealSections = MEAL_TYPES.map(mealType => {
-                    const mealLogs = dayLogs.filter(log => !isWeightOnlyLog(log) && getLogMealType(log) === mealType);
+                    const mealLogs = dayLogs.filter(log => !isWeightOnlyLog(log) && !isWaterLog(log) && getLogMealType(log) === mealType);
                     if(!mealLogs.length) return '';
                     return `
                         <section class="space-y-2">
@@ -533,6 +595,18 @@
                     `;
                 }).join('');
                 const weightLogs = dayLogs.filter(isWeightOnlyLog);
+                const waterLogs = dayLogs.filter(isWaterLog);
+                const waterSection = waterLogs.length ? `
+                    <section class="space-y-2">
+                        <h4 class="text-xs font-bold uppercase tracking-wide text-sky-400">Agua</h4>
+                        ${waterLogs.map(log => `
+                            <div class="bg-slate-900 border border-slate-800/60 p-3 rounded-xl flex justify-between items-center text-xs">
+                                <span class="text-slate-500">${formatLogTime(log)}</span>
+                                <span class="font-bold text-sky-400">${Number(log.waterMl) || 0} ml</span>
+                            </div>
+                        `).join('')}
+                    </section>
+                ` : '';
                 const weightSection = weightLogs.length ? `
                     <section class="space-y-2">
                         <h4 class="text-xs font-bold uppercase tracking-wide text-emerald-400">Peso</h4>
@@ -548,6 +622,7 @@
                     <div class="space-y-3">
                         <h3 class="text-xs font-bold text-slate-400">${dayLogs[0] ? formatLogDate(dayLogs[0]) : dateKey}</h3>
                         ${mealSections}
+                        ${waterSection}
                         ${weightSection}
                     </div>
                 `;
