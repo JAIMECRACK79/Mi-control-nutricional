@@ -75,7 +75,7 @@
 
         <!-- Input Box / Formulario -->
         <div class="bg-slate-900 border border-slate-800 p-4 rounded-2xl space-y-4">
-            <h2 class="text-sm font-bold text-slate-300">Registrar Comida o Peso</h2>
+            <h2 class="text-sm font-bold text-slate-300">Registrar comida</h2>
             
             <textarea id="food-input" rows="3" placeholder="¿Qué has comido? (ej: bocadillo de filete empanado con ketchup...)" class="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-sm text-white focus:outline-none focus:border-emerald-500 resize-none"></textarea>
 
@@ -97,11 +97,17 @@
                 <span id="file-name" class="text-xs text-slate-500 truncate max-w-[150px]">Ninguna foto</span>
             </div>
 
-            <div class="flex gap-2 pt-2">
-                <input type="number" id="weight-input" placeholder="Peso (kg)" step="0.1" class="w-1/3 bg-slate-950 border border-slate-800 rounded-xl px-3 text-sm text-white focus:outline-none focus:border-emerald-500">
-                <button onclick="submitLog()" id="submit-btn" class="w-2/3 bg-emerald-600 hover:bg-emerald-500 font-bold text-white py-2.5 rounded-xl text-sm transition-all shadow-lg shadow-emerald-950/50">Registrar con IA</button>
-            </div>
+            <button onclick="submitLog()" id="submit-btn" class="w-full bg-emerald-600 hover:bg-emerald-500 font-bold text-white py-2.5 rounded-xl text-sm transition-all shadow-lg shadow-emerald-950/50">Analizar y registrar comida</button>
         </div>
+
+        <section class="bg-slate-900 border border-slate-800 p-4 rounded-2xl space-y-3">
+            <h2 class="text-sm font-bold text-slate-300">Registrar peso</h2>
+            <p class="text-xs text-slate-500">Añádelo los días que te peses; no hace falta registrarlo a diario.</p>
+            <div class="flex gap-2">
+                <input type="number" id="weight-input" placeholder="Peso (kg)" step="0.1" min="0.1" max="500" class="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3 text-sm text-white focus:outline-none focus:border-emerald-500">
+                <button onclick="submitWeight()" class="bg-slate-800 hover:bg-slate-700 border border-slate-700 font-bold text-white px-4 py-2.5 rounded-xl text-sm">Guardar peso</button>
+            </div>
+        </section>
 
         <!-- Historial y Análisis Semanal -->
         <div class="space-y-3">
@@ -252,12 +258,15 @@
                 !Number.isFinite(carbs) || carbs < 0) {
                 throw new Error('El análisis debe incluir calorías y macros válidos en gramos.');
             }
+            const foodName = typeof parsed.foodName === 'string' ? parsed.foodName.trim() : '';
+            if(!foodName) throw new Error('La IA no identificó el nombre de la comida.');
 
             return {
                 calories: Math.round(calories),
                 protein,
                 fat,
                 carbs,
+                foodName,
                 summary: typeof parsed.summary === 'string' && parsed.summary.trim()
                     ? parsed.summary.trim() : 'Comida registrada'
             };
@@ -265,16 +274,10 @@
 
         async function submitLog() {
             const text = document.getElementById('food-input').value.trim();
-            const weightValue = document.getElementById('weight-input').value.trim();
             const imageFile = document.getElementById('image-input').files[0];
-            const weight = weightValue ? Number(weightValue) : null;
 
-            if(!text && !imageFile && weight === null) {
-                alert('Escribe algo, sube una foto o pon tu peso.');
-                return;
-            }
-            if(weightValue && (!Number.isFinite(weight) || weight <= 0 || weight > 500)) {
-                alert('Introduce un peso válido en kg.');
+            if(!text && !imageFile) {
+                alert('Escribe qué has comido o sube una foto.');
                 return;
             }
 
@@ -291,15 +294,14 @@
                     apiKeyError = error;
                     console.error('No se pudo leer la clave API.', error);
                 }
-                const needsAI = Boolean(text || imageFile);
                 let result = null;
                 let aiError = null;
 
-                if(needsAI && apiKey) {
+                if(apiKey) {
                     try {
                         const energy = getDailyEnergy();
                         const energyContext = `TDEE diario estimado del usuario: ${Math.round(energy.tdee)} kcal. `;
-                        const prompt = `Actúa como un experto en nutrición. ${energyContext}Estima las calorías y los macronutrientes de la comida. Si no se indica cantidad, estima una ración individual estándar (250 ml para bebidas). No pongas 0 kcal para alimentos con energía; reserva 0 para agua u otros productos sin calorías. Devuelve ÚNICAMENTE un objeto JSON válido, sin markdown ni explicaciones, con números en gramos para los macros y este formato: {"calories": 45, "protein": 0.7, "fat": 0.2, "carbs": 10, "summary": "breve resumen"}. Entrada del usuario: ${text}`;
+                        const prompt = `Actúa como experto en nutrición. ${energyContext}Analiza la comida de la imagen si se adjunta: identifica el plato con un nombre concreto y describe lo que ves; no uses nombres genéricos como "Foto de comida". Si también hay texto, úsalo como contexto. Estima calorías y macronutrientes; si no se indica cantidad, usa una ración individual estándar (250 ml para bebidas). No asignes 0 kcal a alimentos con energía. Devuelve ÚNICAMENTE un objeto JSON válido con las propiedades "foodName" (nombre concreto del plato), "calories" (entero estimado), "protein", "fat" y "carbs" (gramos, como números) y "summary" (descripción breve). Sin markdown ni explicaciones. Texto del usuario: ${text || 'Sin descripción adicional.'}`;
                         const contents = [{ text: prompt }];
 
                         if(imageFile) {
@@ -327,16 +329,16 @@
                         aiError = error;
                         console.error('No se pudo analizar el registro con IA.', error);
                     }
-                } else if(needsAI) {
+                } else {
                     aiError = apiKeyError || new Error('No hay una clave API configurada.');
                 }
 
-                if(needsAI && !result && weight === null) {
+                if(!result) {
                     alert(apiKey
                         ? `No se pudo analizar el registro con IA. Tu registro no se ha guardado.${aiError?.message ? ` Detalle: ${aiError.message}` : ''}`
                         : apiKeyError
-                            ? 'No se pudo leer la clave API del navegador. Puedes guardar el peso sin usar la IA.'
-                            : 'Configura tu API Key para registrar comidas. Puedes guardar el peso sin usar la IA.');
+                            ? 'No se pudo leer la clave API del navegador. La comida no se ha guardado.'
+                            : 'Configura tu API Key para analizar y registrar comidas.');
                     if(!apiKey) toggleConfig();
                     return;
                 }
@@ -349,34 +351,58 @@
                     date,
                     timestamp: now.getTime(),
                     meal,
-                    text: result
-                        ? (text || (imageFile ? 'Foto de comida' : 'Registro de peso'))
-                        : 'Registro de peso',
-                    calories: result ? result.calories : 0,
-                    ...(result ? {
-                        protein: result.protein,
-                        fat: result.fat,
-                        carbs: result.carbs
-                    } : {}),
-                    weight,
-                    summary: result ? result.summary : 'Peso registrado'
+                    type: 'meal',
+                    text: imageFile ? result.foodName : text,
+                    ...(imageFile && text ? { description: text } : {}),
+                    foodName: result.foodName,
+                    calories: result.calories,
+                    protein: result.protein,
+                    fat: result.fat,
+                    carbs: result.carbs,
+                    summary: result.summary
                 });
                 localStorage.setItem('nutri_logs', JSON.stringify(logs));
 
-                if(result) document.getElementById('food-input').value = '';
-                document.getElementById('weight-input').value = '';
-                if(result && imageFile) document.getElementById('image-input').value = '';
-                if(result && imageFile) document.getElementById('file-name').innerText = 'Ninguna foto';
+                document.getElementById('food-input').value = '';
+                if(imageFile) document.getElementById('image-input').value = '';
+                if(imageFile) document.getElementById('file-name').innerText = 'Ninguna foto';
                 updateUI();
-                if(aiError && weight !== null) {
-                    alert(`El peso se guardó correctamente, pero no se pudo analizar la comida. ${apiKeyError ? 'No se pudo leer la clave API.' : 'Revisa la clave o la conexión e inténtalo de nuevo.'}`);
-                }
             } catch (error) {
                 console.error('No se pudo guardar el registro.', error);
                 alert('No se pudo guardar el registro. Comprueba el almacenamiento del navegador e inténtalo de nuevo.');
             } finally {
                 btn.innerText = 'Registrar con IA';
                 btn.disabled = false;
+            }
+        }
+
+        function submitWeight() {
+            const weightValue = document.getElementById('weight-input').value.trim();
+            const weight = Number(weightValue);
+            if(!weightValue || !Number.isFinite(weight) || weight <= 0 || weight > 500) {
+                alert('Introduce un peso válido en kg.');
+                return;
+            }
+
+            try {
+                const now = new Date();
+                const weightLog = {
+                    date: getLocalDateKey(now),
+                    timestamp: now.getTime(),
+                    type: 'weight',
+                    text: 'Registro de peso',
+                    calories: 0,
+                    weight,
+                    summary: 'Peso registrado'
+                };
+                const updatedLogs = [weightLog, ...logs];
+                localStorage.setItem('nutri_logs', JSON.stringify(updatedLogs));
+                logs = updatedLogs;
+                document.getElementById('weight-input').value = '';
+                updateUI();
+            } catch (error) {
+                console.error('No se pudo guardar el peso.', error);
+                alert('No se pudo guardar el peso. Comprueba el almacenamiento del navegador e inténtalo de nuevo.');
             }
         }
 
@@ -400,6 +426,20 @@
             return Number.isFinite(timestamp) && timestamp > 0
                 ? getMealTypeForTime(new Date(timestamp))
                 : 'breakfast';
+        }
+
+        function isWeightOnlyLog(log) {
+            return log.type === 'weight' || (log.text === 'Registro de peso' && Number(log.weight) > 0);
+        }
+
+        function escapeHTML(value) {
+            return String(value).replace(/[&<>"']/g, character => ({
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#39;'
+            })[character]);
         }
 
         function formatLogTime(log) {
@@ -469,7 +509,7 @@
             });
             listEl.innerHTML = [...logsByDate.entries()].map(([dateKey, dayLogs]) => {
                 const mealSections = MEAL_TYPES.map(mealType => {
-                    const mealLogs = dayLogs.filter(log => getLogMealType(log) === mealType);
+                    const mealLogs = dayLogs.filter(log => !isWeightOnlyLog(log) && getLogMealType(log) === mealType);
                     if(!mealLogs.length) return '';
                     return `
                         <section class="space-y-2">
@@ -477,7 +517,8 @@
                             ${mealLogs.map(log => `
                                 <div class="bg-slate-900 border border-slate-800/60 p-3 rounded-xl flex justify-between items-center text-xs">
                                     <div>
-                                        <p class="font-bold text-slate-200">${log.text}</p>
+                                        <p class="font-bold text-slate-200">${escapeHTML(log.foodName || log.text)}</p>
+                                        ${log.description ? `<p class="text-slate-400">${escapeHTML(log.description)}</p>` : ''}
                                         <p class="text-slate-500">${formatLogTime(log)} ${Number(log.weight) > 0 ? `• ⚖️ ${log.weight}kg` : ''}</p>
                                         ${['protein', 'fat', 'carbs'].every(macro => log[macro] !== undefined && Number.isFinite(Number(log[macro])) && Number(log[macro]) >= 0)
                                             ? `<p class="text-slate-500">P ${Number(log.protein).toFixed(1)}g · G ${Number(log.fat).toFixed(1)}g · C ${Number(log.carbs).toFixed(1)}g</p>`
@@ -491,10 +532,23 @@
                         </section>
                     `;
                 }).join('');
+                const weightLogs = dayLogs.filter(isWeightOnlyLog);
+                const weightSection = weightLogs.length ? `
+                    <section class="space-y-2">
+                        <h4 class="text-xs font-bold uppercase tracking-wide text-emerald-400">Peso</h4>
+                        ${weightLogs.map(log => `
+                            <div class="bg-slate-900 border border-slate-800/60 p-3 rounded-xl flex justify-between items-center text-xs">
+                                <span class="text-slate-500">${formatLogTime(log)}</span>
+                                <span class="font-bold text-slate-200">⚖️ ${Number(log.weight)} kg</span>
+                            </div>
+                        `).join('')}
+                    </section>
+                ` : '';
                 return `
                     <div class="space-y-3">
                         <h3 class="text-xs font-bold text-slate-400">${dayLogs[0] ? formatLogDate(dayLogs[0]) : dateKey}</h3>
                         ${mealSections}
+                        ${weightSection}
                     </div>
                 `;
             }).join('');
